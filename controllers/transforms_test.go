@@ -143,6 +143,11 @@ func (d Daemonset) WithTolerations(tolerations []corev1.Toleration) Daemonset {
 	return d
 }
 
+func (d Daemonset) WithPodSecurityContext(psc *corev1.PodSecurityContext) Daemonset {
+	d.Spec.Template.Spec.SecurityContext = psc
+	return d
+}
+
 func (d Daemonset) WithPodLabels(labels map[string]string) Daemonset {
 	d.Spec.Template.Labels = labels
 	return d
@@ -708,6 +713,97 @@ func TestApplyCommonDaemonSetConfig(t *testing.T) {
 				}},
 			errorExpected: true,
 		},
+		{
+			description: "podSecurityContext configured",
+			ds:          NewDaemonset(),
+			dsSpec: gpuv1.DaemonsetsSpec{
+				PodSecurityContext: &corev1.PodSecurityContext{
+					RunAsUser:    ptr.To(int64(1000)),
+					RunAsGroup:   ptr.To(int64(3000)),
+					FSGroup:      ptr.To(int64(2000)),
+					RunAsNonRoot: ptr.To(true),
+				},
+			},
+			expectedDs: NewDaemonset().WithPodSecurityContext(&corev1.PodSecurityContext{
+				RunAsUser:    ptr.To(int64(1000)),
+				RunAsGroup:   ptr.To(int64(3000)),
+				FSGroup:      ptr.To(int64(2000)),
+				RunAsNonRoot: ptr.To(true),
+			}),
+		},
+		{
+			description: "securityContext applied to container with nil SecurityContext",
+			ds:          NewDaemonset().WithContainer(corev1.Container{Name: "test-ctr"}),
+			dsSpec: gpuv1.DaemonsetsSpec{
+				SecurityContext: &corev1.SecurityContext{
+					RunAsUser: ptr.To(int64(0)),
+				},
+			},
+			expectedDs: NewDaemonset().WithContainer(corev1.Container{
+				Name: "test-ctr",
+				SecurityContext: &corev1.SecurityContext{
+					RunAsUser: ptr.To(int64(0)),
+				},
+			}),
+		},
+		{
+			description: "securityContext merged into container with existing SecurityContext",
+			ds: NewDaemonset().WithContainer(corev1.Container{
+				Name: "test-ctr",
+				SecurityContext: &corev1.SecurityContext{
+					Privileged: ptr.To(true),
+				},
+			}),
+			dsSpec: gpuv1.DaemonsetsSpec{
+				SecurityContext: &corev1.SecurityContext{
+					RunAsUser: ptr.To(int64(0)),
+				},
+			},
+			expectedDs: NewDaemonset().WithContainer(corev1.Container{
+				Name: "test-ctr",
+				SecurityContext: &corev1.SecurityContext{
+					Privileged: ptr.To(true),
+					RunAsUser:  ptr.To(int64(0)),
+				},
+			}),
+		},
+		{
+			description: "securityContext applied to initContainer with nil SecurityContext and merged into initContainer with existing",
+			ds: NewDaemonset().
+				WithInitContainer(corev1.Container{Name: "init-1"}).
+				WithInitContainer(corev1.Container{
+					Name: "init-2",
+					SecurityContext: &corev1.SecurityContext{
+						Privileged: ptr.To(true),
+					},
+				}).
+				WithContainer(corev1.Container{Name: "main"}),
+			dsSpec: gpuv1.DaemonsetsSpec{
+				SecurityContext: &corev1.SecurityContext{
+					RunAsUser: ptr.To(int64(0)),
+				},
+			},
+			expectedDs: NewDaemonset().
+				WithInitContainer(corev1.Container{
+					Name: "init-1",
+					SecurityContext: &corev1.SecurityContext{
+						RunAsUser: ptr.To(int64(0)),
+					},
+				}).
+				WithInitContainer(corev1.Container{
+					Name: "init-2",
+					SecurityContext: &corev1.SecurityContext{
+						Privileged: ptr.To(true),
+						RunAsUser:  ptr.To(int64(0)),
+					},
+				}).
+				WithContainer(corev1.Container{
+					Name: "main",
+					SecurityContext: &corev1.SecurityContext{
+						RunAsUser: ptr.To(int64(0)),
+					},
+				}),
+		},
 	}
 
 	for _, tc := range testCases {
@@ -722,6 +818,56 @@ func TestApplyCommonDaemonSetConfig(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.EqualValues(t, tc.expectedDs, tc.ds)
+		})
+	}
+}
+
+func TestMergeSecurityContext(t *testing.T) {
+	tests := []struct {
+		name     string
+		target   *corev1.SecurityContext
+		defaults *corev1.SecurityContext
+		want     *corev1.SecurityContext
+	}{
+		{
+			name:     "target nil - no op",
+			target:   nil,
+			defaults: &corev1.SecurityContext{RunAsUser: ptr.To(int64(0))},
+			want:     nil,
+		},
+		{
+			name:     "defaults nil - no op",
+			target:   &corev1.SecurityContext{Privileged: ptr.To(true)},
+			defaults: nil,
+			want:     &corev1.SecurityContext{Privileged: ptr.To(true)},
+		},
+		{
+			name:     "target empty - all defaults applied",
+			target:   &corev1.SecurityContext{},
+			defaults: &corev1.SecurityContext{RunAsUser: ptr.To(int64(0)), RunAsNonRoot: ptr.To(false)},
+			want:     &corev1.SecurityContext{RunAsUser: ptr.To(int64(0)), RunAsNonRoot: ptr.To(false)},
+		},
+		{
+			name:     "target has Privileged - defaults merge, target preserved",
+			target:   &corev1.SecurityContext{Privileged: ptr.To(true)},
+			defaults: &corev1.SecurityContext{RunAsUser: ptr.To(int64(0))},
+			want:     &corev1.SecurityContext{Privileged: ptr.To(true), RunAsUser: ptr.To(int64(0))},
+		},
+		{
+			name:     "target has RunAsUser - not overwritten by defaults",
+			target:   &corev1.SecurityContext{RunAsUser: ptr.To(int64(1000))},
+			defaults: &corev1.SecurityContext{RunAsUser: ptr.To(int64(0))},
+			want:     &corev1.SecurityContext{RunAsUser: ptr.To(int64(1000))},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mergeSecurityContext(tt.target, tt.defaults)
+			if tt.want == nil {
+				require.Nil(t, tt.target)
+				return
+			}
+			require.Equal(t, tt.want, tt.target)
 		})
 	}
 }

@@ -19,7 +19,12 @@ package main
 import (
 	"context"
 	"os"
+	"reflect"
 	"testing"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func Test_isValidComponent(t *testing.T) {
@@ -212,6 +217,100 @@ UNKNOWN_FEATURE: true`,
 				if err != nil {
 					t.Errorf("validateAdditionalDriverComponents() unexpected error: %v", err)
 				}
+			}
+		})
+	}
+}
+
+func Test_applyDaemonsetMetadataToPod(t *testing.T) {
+	tests := []struct {
+		name       string
+		pod        *corev1.Pod
+		daemonset  *appsv1.DaemonSet
+		wantLabels map[string]string
+		wantAnno   map[string]string
+	}{
+		{
+			name: "empty daemonset template - no change",
+			pod: &corev1.Pod{
+				ObjectMeta: meta_v1.ObjectMeta{Labels: map[string]string{"app": "nvidia-cuda-validator"}},
+			},
+			daemonset: &appsv1.DaemonSet{
+				Spec: appsv1.DaemonSetSpec{
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: meta_v1.ObjectMeta{},
+					},
+				},
+			},
+			wantLabels: map[string]string{"app": "nvidia-cuda-validator"},
+			wantAnno:   nil,
+		},
+		{
+			name: "custom labels applied, app and app.kubernetes.io/part-of skipped",
+			pod: &corev1.Pod{
+				ObjectMeta: meta_v1.ObjectMeta{Labels: map[string]string{"app": "nvidia-cuda-validator"}},
+			},
+			daemonset: &appsv1.DaemonSet{
+				Spec: appsv1.DaemonSetSpec{
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: meta_v1.ObjectMeta{
+							Labels: map[string]string{
+								"app":                       "should-be-skipped",
+								"app.kubernetes.io/part-of": "should-be-skipped",
+								"custom.company.com/team":   "gpu-ops",
+								"custom.company.com/env":    "prod",
+							},
+						},
+					},
+				},
+			},
+			wantLabels: map[string]string{
+				"app":                     "nvidia-cuda-validator",
+				"custom.company.com/team": "gpu-ops",
+				"custom.company.com/env":  "prod",
+			},
+			wantAnno: nil,
+		},
+		{
+			name: "annotations applied",
+			pod:  &corev1.Pod{ObjectMeta: meta_v1.ObjectMeta{Labels: map[string]string{"app": "nvidia-cuda-validator"}}},
+			daemonset: &appsv1.DaemonSet{
+				Spec: appsv1.DaemonSetSpec{
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: meta_v1.ObjectMeta{
+							Annotations: map[string]string{"custom.annotation/key": "value"},
+						},
+					},
+				},
+			},
+			wantLabels: map[string]string{"app": "nvidia-cuda-validator"},
+			wantAnno:   map[string]string{"custom.annotation/key": "value"},
+		},
+		{
+			name: "pod with nil labels gets labels and annotations",
+			pod:  &corev1.Pod{},
+			daemonset: &appsv1.DaemonSet{
+				Spec: appsv1.DaemonSetSpec{
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: meta_v1.ObjectMeta{
+							Labels:      map[string]string{"extra": "label"},
+							Annotations: map[string]string{"extra": "anno"},
+						},
+					},
+				},
+			},
+			wantLabels: map[string]string{"extra": "label"},
+			wantAnno:   map[string]string{"extra": "anno"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			applyDaemonsetMetadataToPod(tt.pod, tt.daemonset)
+			if !reflect.DeepEqual(tt.pod.Labels, tt.wantLabels) {
+				t.Errorf("labels = %v, want %v", tt.pod.Labels, tt.wantLabels)
+			}
+			if !reflect.DeepEqual(tt.pod.Annotations, tt.wantAnno) {
+				t.Errorf("annotations = %v, want %v", tt.pod.Annotations, tt.wantAnno)
 			}
 		})
 	}

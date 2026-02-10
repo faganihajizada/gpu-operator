@@ -783,14 +783,14 @@ func preProcessDaemonSet(obj *appsv1.DaemonSet, n ClusterPolicyController) error
 }
 
 // applyCommonDaemonsetMetadata adds additional labels and annotations to the daemonset podSpec if there are any specified
-// by the user in the podSpec
+// by the user in the podSpec.
 func applyCommonDaemonsetMetadata(obj *appsv1.DaemonSet, dsSpec *gpuv1.DaemonsetsSpec) {
 	if len(dsSpec.Labels) > 0 {
 		if obj.Spec.Template.Labels == nil {
 			obj.Spec.Template.Labels = make(map[string]string)
 		}
 		for labelKey, labelValue := range dsSpec.Labels {
-			// if the user specifies an override of the "app" or the ""app.kubernetes.io/part-of"" key, we skip it.
+			// if the user specifies an override of the "app" or the "app.kubernetes.io/part-of" key, we skip it.
 			// DaemonSet pod selectors are immutable, so we still want the pods to be selectable as before and working
 			// with the existing daemon set selectors.
 			if labelKey == "app" || labelKey == "app.kubernetes.io/part-of" {
@@ -810,6 +810,49 @@ func applyCommonDaemonsetMetadata(obj *appsv1.DaemonSet, dsSpec *gpuv1.Daemonset
 	}
 }
 
+// mergeSecurityContext copies fields from defaults into target only when the target's field is nil.
+func mergeSecurityContext(target, defaults *corev1.SecurityContext) {
+	if target == nil || defaults == nil {
+		return
+	}
+	if target.RunAsUser == nil && defaults.RunAsUser != nil {
+		target.RunAsUser = defaults.RunAsUser
+	}
+	if target.RunAsGroup == nil && defaults.RunAsGroup != nil {
+		target.RunAsGroup = defaults.RunAsGroup
+	}
+	if target.RunAsNonRoot == nil && defaults.RunAsNonRoot != nil {
+		target.RunAsNonRoot = defaults.RunAsNonRoot
+	}
+	if target.ReadOnlyRootFilesystem == nil && defaults.ReadOnlyRootFilesystem != nil {
+		target.ReadOnlyRootFilesystem = defaults.ReadOnlyRootFilesystem
+	}
+	if target.AllowPrivilegeEscalation == nil && defaults.AllowPrivilegeEscalation != nil {
+		target.AllowPrivilegeEscalation = defaults.AllowPrivilegeEscalation
+	}
+	if target.Privileged == nil && defaults.Privileged != nil {
+		target.Privileged = defaults.Privileged
+	}
+	if target.Capabilities == nil && defaults.Capabilities != nil {
+		target.Capabilities = defaults.Capabilities.DeepCopy()
+	}
+	if target.SeccompProfile == nil && defaults.SeccompProfile != nil {
+		target.SeccompProfile = defaults.SeccompProfile.DeepCopy()
+	}
+	if target.SELinuxOptions == nil && defaults.SELinuxOptions != nil {
+		target.SELinuxOptions = defaults.SELinuxOptions.DeepCopy()
+	}
+	if target.AppArmorProfile == nil && defaults.AppArmorProfile != nil {
+		target.AppArmorProfile = defaults.AppArmorProfile.DeepCopy()
+	}
+	if target.ProcMount == nil && defaults.ProcMount != nil {
+		target.ProcMount = defaults.ProcMount
+	}
+	if target.WindowsOptions == nil && defaults.WindowsOptions != nil {
+		target.WindowsOptions = defaults.WindowsOptions.DeepCopy()
+	}
+}
+
 // Apply common config that is applicable for all Daemonsets
 func applyCommonDaemonsetConfig(obj *appsv1.DaemonSet, config *gpuv1.ClusterPolicySpec) error {
 	// apply daemonset update strategy
@@ -826,6 +869,29 @@ func applyCommonDaemonsetConfig(obj *appsv1.DaemonSet, config *gpuv1.ClusterPoli
 	// set tolerations if specified
 	if len(config.Daemonsets.Tolerations) > 0 {
 		obj.Spec.Template.Spec.Tolerations = config.Daemonsets.Tolerations
+	}
+
+	// set pod-level security context if specified
+	if config.Daemonsets.PodSecurityContext != nil {
+		obj.Spec.Template.Spec.SecurityContext = config.Daemonsets.PodSecurityContext
+	}
+
+	// set container-level security context defaults
+	if config.Daemonsets.SecurityContext != nil {
+		for i := range obj.Spec.Template.Spec.Containers {
+			if obj.Spec.Template.Spec.Containers[i].SecurityContext == nil {
+				obj.Spec.Template.Spec.Containers[i].SecurityContext = config.Daemonsets.SecurityContext.DeepCopy()
+			} else {
+				mergeSecurityContext(obj.Spec.Template.Spec.Containers[i].SecurityContext, config.Daemonsets.SecurityContext)
+			}
+		}
+		for i := range obj.Spec.Template.Spec.InitContainers {
+			if obj.Spec.Template.Spec.InitContainers[i].SecurityContext == nil {
+				obj.Spec.Template.Spec.InitContainers[i].SecurityContext = config.Daemonsets.SecurityContext.DeepCopy()
+			} else {
+				mergeSecurityContext(obj.Spec.Template.Spec.InitContainers[i].SecurityContext, config.Daemonsets.SecurityContext)
+			}
+		}
 	}
 	return nil
 }
