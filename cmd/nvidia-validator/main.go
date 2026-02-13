@@ -34,7 +34,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert/yaml"
 	cli "github.com/urfave/cli/v3"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1318,8 +1317,6 @@ func (p *Plugin) runWorkload() error {
 	pod.Spec.Tolerations = validatorDaemonset.Spec.Template.Spec.Tolerations
 	// update podSpec with node name, so it will just run on current node
 	pod.Spec.NodeName = nodeNameFlag
-	// apply labels and annotations from DaemonSet pod template (e.g. spec.daemonsets.labels)
-	applyDaemonsetMetadataToPod(pod, validatorDaemonset)
 
 	resourceName, err := p.getGPUResourceName()
 	if err != nil {
@@ -1405,30 +1402,6 @@ func loadPodSpec(podSpecPath string) (*corev1.Pod, error) {
 		return nil, err
 	}
 	return &pod, nil
-}
-
-// applyDaemonsetMetadataToPod merges labels and annotations from the DaemonSet pod template
-// onto the validator workload pod (consistent with applyCommonDaemonsetMetadata).
-func applyDaemonsetMetadataToPod(pod *corev1.Pod, daemonset *appsv1.DaemonSet) {
-	if daemonset.Spec.Template.Labels != nil {
-		if pod.Labels == nil {
-			pod.Labels = make(map[string]string)
-		}
-		for k, v := range daemonset.Spec.Template.Labels {
-			if k == "app" || k == "app.kubernetes.io/part-of" {
-				continue
-			}
-			pod.Labels[k] = v
-		}
-	}
-	if daemonset.Spec.Template.Annotations != nil {
-		if pod.Annotations == nil {
-			pod.Annotations = make(map[string]string)
-		}
-		for k, v := range daemonset.Spec.Template.Annotations {
-			pod.Annotations[k] = v
-		}
-	}
 }
 
 func (p *Plugin) countGPUResources() (int64, error) {
@@ -1608,8 +1581,6 @@ func (c *CUDA) runWorkload() error {
 	pod.Spec.Tolerations = validatorDaemonset.Spec.Template.Spec.Tolerations
 	// update podSpec with node name, so it will just run on current node
 	pod.Spec.NodeName = nodeNameFlag
-	// apply labels and annotations from DaemonSet pod template (e.g. spec.daemonsets.labels)
-	applyDaemonsetMetadataToPod(pod, validatorDaemonset)
 
 	opts := meta_v1.ListOptions{LabelSelector: labels.Set{"app": cudaValidatorLabelValue}.AsSelector().String(),
 		FieldSelector: fields.Set{"spec.nodeName": nodeNameFlag}.AsSelector().String()}

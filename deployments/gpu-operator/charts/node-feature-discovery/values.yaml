@@ -10,9 +10,6 @@ nameOverride: ""
 fullnameOverride: ""
 namespaceOverride: ""
 
-# commonLabels are added to all resources created by this chart (DaemonSets, Deployments, etc.)
-commonLabels: {}
-
 featureGates:
   NodeFeatureGroupAPI: false
 

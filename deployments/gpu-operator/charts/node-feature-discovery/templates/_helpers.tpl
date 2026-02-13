@@ -52,9 +52,6 @@ helm.sh/chart: {{ include "node-feature-discovery.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- with .Values.commonLabels }}
-{{ toYaml . }}
-{{- end }}
 {{- end -}}
 
 {{/*
